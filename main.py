@@ -1,10 +1,16 @@
 import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pad_sequence
 import os
+import torch.optim as optim
+import matplotlib.pyplot as plt
+from transformer import Encoder, Classifier, EncoderWithClassifier
+
 
 from tokenizer import SimpleTokenizer
 from dataset import SpeechesClassificationDataset, LanguageModelingDataset
+from utilities import Utilities
 
 
 seed = 42
@@ -15,7 +21,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 the numbers mentioned in the assignment description """
 batch_size = 16  # Number of independent sequences  we will process in parallel
 block_size = 32  # Maximum context length for predictions
-learning_rate = 1e-3  # Learning rate for the optimizer
+learning_rate = 1e-3  # Learning rate for the optimizer 1e-3
 n_embd = 64  # Embedding dimension
 n_head = 2  # Number of attention heads
 n_layer = 4  # Number of transformer layers
@@ -99,41 +105,122 @@ def compute_perplexity(decoderLMmodel, data_loader, eval_iters=100):
     decoderLMmodel.train()
     return perplexity
 
-def main():
 
-    print("Loading data and creating tokenizer ...")
+
+
+
+
+
+
+
+def train_and_evaluate(model, train_loader, test_loader, epochs, device):
+    criterion = nn.CrossEntropyLoss()
+    #optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate, betas=(0.9, 0.98), eps=1e-9) ###
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1000, gamma=0.9) ###
+    
+    train_accuracies = []
+    test_accuracies = []
+    
+    for epoch in range(epochs):
+        model.train()
+        total_correct = 0
+        total_samples = 0
+        
+        for batch in train_loader:
+            inputs, labels = batch
+            inputs, labels = inputs.to(device), labels.to(device)
+            
+            optimizer.zero_grad()
+            outputs, _ = model(inputs)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) ###
+            optimizer.step()
+            
+            _, predicted = torch.max(outputs.data, 1)
+            total_correct += (predicted == labels).sum().item()
+            total_samples += labels.size(0)
+        
+        train_accuracy = 100 * total_correct / total_samples
+        train_accuracies.append(train_accuracy)
+        
+        test_accuracy = evaluate(model, test_loader, device)
+        test_accuracies.append(test_accuracy)
+        
+        print(f"Epoch {epoch+1}/{epochs}")
+        print(f"Train Accuracy: {train_accuracy:.2f}%")
+        print(f"Test Accuracy: {test_accuracy:.2f}%")
+        
+        scheduler.step() ###
+    
+    return train_accuracies, test_accuracies
+
+def evaluate(model, data_loader, device):
+    model.eval()
+    total_correct = 0
+    total_samples = 0
+    
+    with torch.no_grad():
+        for batch in data_loader:
+            inputs, labels = batch
+            inputs, labels = inputs.to(device), labels.to(device)
+            
+            outputs, _ = model(inputs)
+            _, predicted = torch.max(outputs.data, 1)
+            total_correct += (predicted == labels).sum().item()
+            total_samples += labels.size(0)
+    
+    accuracy = 100 * total_correct / total_samples
+    return accuracy
+
+def visualize_attention(attention_matrix):
+    plt.figure(figsize=(10, 8))
+    plt.imshow(attention_matrix, cmap='viridis')
+    plt.colorbar()
+    plt.title('Attention Matrix')
+    plt.xlabel('Key')
+    plt.ylabel('Query')
+    plt.show()
+    
+    
+    
+
+def main():    
+    # Load data and create tokenizer
     texts = load_texts('speechesdataset')
-    tokenizer = SimpleTokenizer(' '.join(texts)) # create a tokenizer from the data
+    tokenizer = SimpleTokenizer(' '.join(texts))
     print("Vocabulary size is", tokenizer.vocab_size)
 
     train_CLS_dataset = SpeechesClassificationDataset(tokenizer, "speechesdataset/train_CLS.tsv")
-    train_CLS_loader = DataLoader(train_CLS_dataset, batch_size=batch_size,collate_fn=collate_batch,shuffle=True)
+    train_CLS_loader = DataLoader(train_CLS_dataset, batch_size=batch_size, collate_fn=collate_batch, shuffle=True)
+    test_CLS_dataset = SpeechesClassificationDataset(tokenizer, "speechesdataset/test_CLS.tsv")
+    test_CLS_loader = DataLoader(test_CLS_dataset, batch_size=batch_size, collate_fn=collate_batch)
 
-  
-    inputfile = "speechesdataset/train_LM.txt"
-    with open(inputfile, 'r', encoding='utf-8') as f:
-        lmtrainText = f.read()
-    train_LM_dataset = LanguageModelingDataset(tokenizer, lmtrainText,  block_size)
-    train_LM_loader = DataLoader(train_LM_dataset, batch_size=batch_size, shuffle=True)
-
-     # for the classification  task, you will train for a fixed number of epochs like this:
-
-    for epoch in range(epochs_CLS):
-        for xb, yb in train_CLS_loader:
-            xb, yb = xb.to(device), yb.to(device)
-
-            # CLS training code here
-
-
-    # for the language modeling task, you will iterate over the training data for a fixed number of iterations like this:
-    for i, (xb, yb) in enumerate(train_LM_loader):
-        if i >= max_iters:
-            break
-        xb, yb = xb.to(device), yb.to(device)
-        # LM training code here
-
+    # Create model
+    encoder = Encoder(tokenizer.vocab_size, n_embd, n_head, n_layer, block_size).to(device)
+    classifier = Classifier(n_input, n_hidden, n_output).to(device)
+    model = EncoderWithClassifier(encoder, classifier).to(device)
     
-
+    # Train and evaluate
+    train_accuracies, test_accuracies = train_and_evaluate(model, train_CLS_loader, test_CLS_loader, epochs_CLS, device)
+    
+    # Print final accuracies
+    print(f"Final Train Accuracy: {train_accuracies[-1]:.2f}%")
+    print(f"Final Test Accuracy: {test_accuracies[-1]:.2f}%")
+    
+    # Visualize attention (for a sample input)
+    sample_input, _ = next(iter(test_CLS_loader))
+    sample_input = sample_input.to(device)
+    _, attentions = model(sample_input)
+    
+    # Visualize attention for the first head of the last layer
+    attention_matrix = attentions[-1][0, 0].cpu().detach().numpy()
+    visualize_attention(attention_matrix)
+    
+    # Count parameters
+    total_params = sum(p.numel() for p in model.encoder.parameters())
+    print(f"Number of parameters in the encoder: {total_params}")
 
 
 if __name__ == "__main__":

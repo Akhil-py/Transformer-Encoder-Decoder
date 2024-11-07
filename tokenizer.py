@@ -1,3 +1,8 @@
+import nltk
+# nltk.download('punkt')
+# nltk.download('omw-1.4')
+# nltk.download('wordnet')
+# nltk.download('punkt_tab')
 from nltk.tokenize import word_tokenize
 import os
 
