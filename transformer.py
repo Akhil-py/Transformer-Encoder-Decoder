@@ -38,7 +38,7 @@ class FeedForward(nn.Module):
         self.net = nn.Sequential(
             nn.Linear(d_model, 4 * d_model),
             nn.ReLU(),
-            nn.Dropout(0.3), ###
+            nn.Dropout(0.3), #####
             nn.Linear(4 * d_model, d_model)
         )
     
@@ -52,7 +52,7 @@ class EncoderLayer(nn.Module):
         self.ff = FeedForward(d_model)
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
-        dropout_rate = 0.3 ###
+        dropout_rate = 0.3 ### change before submitting. tried: 0.1, 0.3
         self.dropout = nn.Dropout(p=dropout_rate)  ###
         
     def forward(self, x, mask=None):
@@ -67,7 +67,7 @@ class Encoder(nn.Module):
         self.token_embedding = nn.Embedding(vocab_size, d_model)
         self.position_embedding = nn.Embedding(max_seq_len, d_model)
         self.layers = nn.ModuleList([EncoderLayer(d_model, n_head) for _ in range(n_layer)])
-        self.scale = math.sqrt(d_model) ###
+        self.scale = math.sqrt(d_model) ### piazza if allowed
         
     def forward(self, x):
         seq_len = x.size(1)
@@ -141,7 +141,6 @@ class Decoder(nn.Module):
         pos = torch.arange(seq_len, device=x.device).unsqueeze(0)
         x = self.token_embedding(x) + self.position_embedding(pos)
         
-        # Mask for future tokens (batch_size, 1, seq_len, seq_len)
         mask = torch.tril(torch.ones((seq_len, seq_len), device=x.device)).unsqueeze(0).unsqueeze(0)
         
         attentions = []
@@ -152,15 +151,9 @@ class Decoder(nn.Module):
         output = self.final_layer(x)
         
         if targets is not None:
-            # Flatten the output and targets to calculate CrossEntropyLoss
-            output = output.view(-1, output.size(-1))  # Shape: (batch_size * seq_len, vocab_size)
-            targets = targets.view(-1)  # Shape: (batch_size * seq_len)
-            loss = self.loss_fn(output, targets)  # Compute the cross-entropy loss
+            output = output.view(-1, output.size(-1))
+            targets = targets.view(-1) 
+            loss = self.loss_fn(output, targets) 
             return output, loss
         
         return output  
-        
-        if self.return_attentions:
-            return output, attentions 
-        else:
-            return output

@@ -1,3 +1,4 @@
+import argparse
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -107,13 +108,6 @@ def compute_perplexity(decoderLMmodel, data_loader, eval_iters=100):
     return perplexity
 
 
-
-
-
-
-
-
-
 def train_and_evaluate(model, train_loader, test_loader, epochs, device):
     criterion = nn.CrossEntropyLoss()
     #optimizer = optim.Adam(model.parameters(), lr=learning_rate)
@@ -157,6 +151,7 @@ def train_and_evaluate(model, train_loader, test_loader, epochs, device):
     
     return train_accuracies, test_accuracies
 
+
 def evaluate(model, data_loader, device):
     model.eval()
     total_correct = 0
@@ -184,13 +179,6 @@ def visualize_attention(attention_matrix):
     plt.ylabel('Query')
     plt.show()
     
-    
-    
-    
-    
-    
-    
-    
 def train_decoder(decoder, train_loader, optimizer, criterion, max_iters, eval_interval):
     decoder.train()
     total_loss = 0
@@ -212,92 +200,91 @@ def train_decoder(decoder, train_loader, optimizer, criterion, max_iters, eval_i
         if (i+1) % eval_interval == 0:
             print(f'Epoch {i+1}, Loss: {total_loss / eval_interval}')
             total_loss = 0
-
-    
-    
-    
+            perplexity = compute_perplexity(decoder, train_loader)
+            print(f'Training set perplexity after {i+1} Epochs: {perplexity}')
     
 
 def main():    
+    parser = argparse.ArgumentParser(description="Run Transformer Parts")
+    parser.add_argument("-part1", action="store_true", help="Run only the encoder")
+    parser.add_argument("-part2", action="store_true", help="Run only the decoder")
+    args = parser.parse_args()
+    noArg = not args.part1 and not args.part2
     
-    # Load data and create tokenizer
     texts = load_texts('speechesdataset')
     tokenizer = SimpleTokenizer(' '.join(texts))
     print("Vocabulary size is", tokenizer.vocab_size)
+    
+    '''Encoder
+    '''
+    if args.part1 or noArg:
 
-    train_CLS_dataset = SpeechesClassificationDataset(tokenizer, "speechesdataset/train_CLS.tsv")
-    train_CLS_loader = DataLoader(train_CLS_dataset, batch_size=batch_size, collate_fn=collate_batch, shuffle=True)
-    test_CLS_dataset = SpeechesClassificationDataset(tokenizer, "speechesdataset/test_CLS.tsv")
-    test_CLS_loader = DataLoader(test_CLS_dataset, batch_size=batch_size, collate_fn=collate_batch)
+        train_CLS_dataset = SpeechesClassificationDataset(tokenizer, "speechesdataset/train_CLS.tsv")
+        train_CLS_loader = DataLoader(train_CLS_dataset, batch_size=batch_size, collate_fn=collate_batch, shuffle=True)
+        test_CLS_dataset = SpeechesClassificationDataset(tokenizer, "speechesdataset/test_CLS.tsv")
+        test_CLS_loader = DataLoader(test_CLS_dataset, batch_size=batch_size, collate_fn=collate_batch)
 
-    # Create model
-    encoder = Encoder(tokenizer.vocab_size, n_embd, n_head, n_layer, block_size).to(device)
-    classifier = Classifier(n_input, n_hidden, n_output).to(device)
-    model = EncoderWithClassifier(encoder, classifier).to(device)
+        # Create encoder model
+        encoder = Encoder(tokenizer.vocab_size, n_embd, n_head, n_layer, block_size).to(device)
+        classifier = Classifier(n_input, n_hidden, n_output).to(device)
+        model = EncoderWithClassifier(encoder, classifier).to(device)
+        
+        # Train and evaluate
+        train_accuracies, test_accuracies = train_and_evaluate(model, train_CLS_loader, test_CLS_loader, epochs_CLS, device)
+        
+        print(f"Final Train Accuracy: {train_accuracies[-1]:.2f}%")
+        print(f"Final Test Accuracy: {test_accuracies[-1]:.2f}%")
+        
+        # Heat map
+        sample_input, _ = next(iter(test_CLS_loader))
+        sample_input = sample_input.to(device)
+        _, attentions = model(sample_input)
+        
+        # Attention: first head of the last layer
+        attention_matrix = attentions[-1][0, 0].cpu().detach().numpy()
+        visualize_attention(attention_matrix)
+        
+        # parameters
+        total_params = sum(p.numel() for p in model.encoder.parameters())
+        print(f"Number of parameters in the encoder: {total_params}")
+        
+    '''Decoder
+    '''
+    if args.part2 or noArg:    
     
-    # Train and evaluate
-    train_accuracies, test_accuracies = train_and_evaluate(model, train_CLS_loader, test_CLS_loader, epochs_CLS, device)
-    
-    # Print final accuracies
-    print(f"Final Train Accuracy: {train_accuracies[-1]:.2f}%")
-    print(f"Final Test Accuracy: {test_accuracies[-1]:.2f}%")
-    
-    # Visualize attention (for a sample input)
-    sample_input, _ = next(iter(test_CLS_loader))
-    sample_input = sample_input.to(device)
-    _, attentions = model(sample_input)
-    
-    # Visualize attention for the first head of the last layer
-    attention_matrix = attentions[-1][0, 0].cpu().detach().numpy()
-    visualize_attention(attention_matrix)
-    
-    # Count parameters
-    total_params = sum(p.numel() for p in model.encoder.parameters())
-    print(f"Number of parameters in the encoder: {total_params}")
-    
-    
-    
-    
-    with open('speechesdataset/train_LM.txt', 'r', encoding="utf-8") as f:
-        trainLMText = f.read()
-    
-    train_LM_dataset = LanguageModelingDataset(tokenizer, trainLMText, block_size)
-    #print("block size: ", block_size)
-    print("train lm dataset len: ", len(train_LM_dataset))
-    train_LM_loader = DataLoader(train_LM_dataset, batch_size=batch_size, collate_fn=collate_batch, shuffle=True)
-    
-    
-    
-    # Define decoder model, optimizer, and loss criterion
-    decoder = Decoder(tokenizer.vocab_size, n_embd, n_head, n_layer, n_hidden, block_size, return_attentions=False).to(device)
-    optimizer = torch.optim.Adam(decoder.parameters(), lr=learning_rate)
-    criterion = nn.CrossEntropyLoss()
+        with open('speechesdataset/train_LM.txt', 'r', encoding="utf-8") as f:
+            trainLMText = f.read()
+        
+        train_LM_dataset = LanguageModelingDataset(tokenizer, trainLMText, block_size)
+        #print("block size: ", block_size)
+        print("train lm dataset len: ", len(train_LM_dataset))
+        train_LM_loader = DataLoader(train_LM_dataset, batch_size=batch_size, collate_fn=collate_batch, shuffle=True)
+        
+        # Initialize decoder
+        decoder = Decoder(tokenizer.vocab_size, n_embd, n_head, n_layer, n_hidden, block_size, return_attentions=False).to(device)
+        optimizer = torch.optim.Adam(decoder.parameters(), lr=learning_rate)
+        criterion = nn.CrossEntropyLoss()
 
-    # Train the decoder with the language model data
-    train_decoder(decoder, train_LM_loader, optimizer, criterion, max_iters, eval_interval)
-    
-    # Perplexity of decoder
-    perplexity = compute_perplexity(decoder, train_LM_loader)
-    print(f'Training set perplexity: {perplexity}')
+        # Train decoder
+        train_decoder(decoder, train_LM_loader, optimizer, criterion, max_iters, eval_interval)
+        
+        # Perplexity
+        perplexity = compute_perplexity(decoder, train_LM_loader)
+        print(f'Training set perplexity: {perplexity}')
 
-    # Evaluate on test files
-    for test_file in ['speechesdataset/test_LM_obama.txt', 'speechesdataset/test_LM_wbush.txt', 'speechesdataset/test_LM_hbush.txt']:
-        with open(test_file, 'r', encoding="utf-8") as f:
-            text = f.read()
-        test_dataset = LanguageModelingDataset(tokenizer, text, block_size)
-        #print("test dataset: ", len(test_dataset))
-        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
-        perplexity = compute_perplexity(decoder, test_loader)
-        print(f'Perplexity on {test_file}: {perplexity}')
+        # Evaluate on test files
+        for test_file in ['speechesdataset/test_LM_obama.txt', 'speechesdataset/test_LM_wbush.txt', 'speechesdataset/test_LM_hbush.txt']:
+            with open(test_file, 'r', encoding="utf-8") as f:
+                text = f.read()
+            test_dataset = LanguageModelingDataset(tokenizer, text, block_size)
+            #print("test dataset: ", len(test_dataset))
+            test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+            perplexity = compute_perplexity(decoder, test_loader)
+            print(f'Perplexity on {test_file}: {perplexity}')
 
-    # Visualize attention for a sample input
-    #sample_input, _ = next(iter(test_loader))
-    #_, attentions = decoder(sample_input.to(device))
-    #visualize_attention(attentions[-1][0, 0].cpu().detach().numpy())
-
-    # Count parameters
-    num_params = sum(p.numel() for p in decoder.parameters())
-    print(f'Number of parameters in the decoder: {num_params}')
+        # parameters
+        num_params = sum(p.numel() for p in decoder.parameters())
+        print(f'Number of parameters in the decoder: {num_params}')
 
 
 if __name__ == "__main__":
