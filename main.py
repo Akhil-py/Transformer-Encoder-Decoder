@@ -5,7 +5,7 @@ from torch.nn.utils.rnn import pad_sequence
 import os
 import torch.optim as optim
 import matplotlib.pyplot as plt
-from transformer import Encoder, Classifier, EncoderWithClassifier
+from transformer import Encoder, Classifier, EncoderWithClassifier, Decoder
 
 
 from tokenizer import SimpleTokenizer
@@ -90,9 +90,10 @@ def compute_perplexity(decoderLMmodel, data_loader, eval_iters=100):
     """
     decoderLMmodel.eval()
     losses= []
+    total_loss = 0
     for X, Y in data_loader:
         X, Y = X.to(device), Y.to(device)
-        loss = decoderLMmodel(X, Y) # your model should be computing the cross entropy loss
+        output, loss = decoderLMmodel(X, Y) # your model should be computing the cross entropy loss
         losses.append(loss.item())
         total_loss += loss.item()
         if len(losses) >= eval_iters: break
@@ -185,8 +186,40 @@ def visualize_attention(attention_matrix):
     
     
     
+    
+    
+    
+    
+    
+def train_decoder(decoder, train_loader, optimizer, criterion, max_iters, eval_interval):
+    decoder.train()
+    total_loss = 0
+    for i, (xb, yb) in enumerate(train_loader):
+        if i >= max_iters:
+            break
+            
+        xb, yb = xb.to(device), yb.to(device)
+        optimizer.zero_grad()
+            
+        outputs = decoder(xb)
+        loss = criterion(outputs.view(-1, outputs.size(-1)), yb.view(-1))
+            
+        loss.backward()
+        optimizer.step()
+            
+        total_loss += loss.item()
+            
+        if (i+1) % eval_interval == 0:
+            print(f'Epoch {i+1}, Loss: {total_loss / eval_interval}')
+            total_loss = 0
+
+    
+    
+    
+    
 
 def main():    
+    
     # Load data and create tokenizer
     texts = load_texts('speechesdataset')
     tokenizer = SimpleTokenizer(' '.join(texts))
@@ -221,6 +254,50 @@ def main():
     # Count parameters
     total_params = sum(p.numel() for p in model.encoder.parameters())
     print(f"Number of parameters in the encoder: {total_params}")
+    
+    
+    
+    
+    with open('speechesdataset/train_LM.txt', 'r', encoding="utf-8") as f:
+        trainLMText = f.read()
+    
+    train_LM_dataset = LanguageModelingDataset(tokenizer, trainLMText, block_size)
+    #print("block size: ", block_size)
+    print("train lm dataset len: ", len(train_LM_dataset))
+    train_LM_loader = DataLoader(train_LM_dataset, batch_size=batch_size, collate_fn=collate_batch, shuffle=True)
+    
+    
+    
+    # Define decoder model, optimizer, and loss criterion
+    decoder = Decoder(tokenizer.vocab_size, n_embd, n_head, n_layer, n_hidden, block_size, return_attentions=False).to(device)
+    optimizer = torch.optim.Adam(decoder.parameters(), lr=learning_rate)
+    criterion = nn.CrossEntropyLoss()
+
+    # Train the decoder with the language model data
+    train_decoder(decoder, train_LM_loader, optimizer, criterion, max_iters, eval_interval)
+    
+    # Perplexity of decoder
+    perplexity = compute_perplexity(decoder, train_LM_loader)
+    print(f'Training set perplexity: {perplexity}')
+
+    # Evaluate on test files
+    for test_file in ['speechesdataset/test_LM_obama.txt', 'speechesdataset/test_LM_wbush.txt', 'speechesdataset/test_LM_hbush.txt']:
+        with open(test_file, 'r', encoding="utf-8") as f:
+            text = f.read()
+        test_dataset = LanguageModelingDataset(tokenizer, text, block_size)
+        #print("test dataset: ", len(test_dataset))
+        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+        perplexity = compute_perplexity(decoder, test_loader)
+        print(f'Perplexity on {test_file}: {perplexity}')
+
+    # Visualize attention for a sample input
+    #sample_input, _ = next(iter(test_loader))
+    #_, attentions = decoder(sample_input.to(device))
+    #visualize_attention(attentions[-1][0, 0].cpu().detach().numpy())
+
+    # Count parameters
+    num_params = sum(p.numel() for p in decoder.parameters())
+    print(f'Number of parameters in the decoder: {num_params}')
 
 
 if __name__ == "__main__":

@@ -109,6 +109,58 @@ class EncoderWithClassifier(nn.Module):
         return self.classifier(pooled), attentions
     
     
-    
 # Part 2 - Decoder
+class DecoderLayer(nn.Module):
+    def __init__(self, d_model, n_head, d_ff):
+        super().__init__()
+        self.self_attn = MultiHeadAttention(d_model, n_head)
+        self.feed_forward = FeedForward(d_model)
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        
+    def forward(self, x, mask):
+        attn_output, attn_weights = self.self_attn(x, mask)
+        x = self.norm1(x + attn_output)
+        ff_output = self.feed_forward(x)
+        x = self.norm2(x + ff_output)
+        return x, attn_weights
 
+class Decoder(nn.Module):
+    def __init__(self, vocab_size, d_model, n_head, n_layer, d_ff, max_seq_len, return_attentions=True):
+        super().__init__()
+        self.token_embedding = nn.Embedding(vocab_size, d_model)
+        self.position_embedding = nn.Embedding(max_seq_len, d_model)
+        self.layers = nn.ModuleList([DecoderLayer(d_model, n_head, d_ff) for _ in range(n_layer)])
+        self.final_layer = nn.Linear(d_model, vocab_size)
+        self.loss_fn = nn.CrossEntropyLoss(reduction='mean')
+        self.return_attentions = return_attentions
+        self.vocab_size = vocab_size
+        
+    def forward(self, x, targets=None):
+        seq_len = x.size(1)
+        pos = torch.arange(seq_len, device=x.device).unsqueeze(0)
+        x = self.token_embedding(x) + self.position_embedding(pos)
+        
+        # Mask for future tokens (batch_size, 1, seq_len, seq_len)
+        mask = torch.tril(torch.ones((seq_len, seq_len), device=x.device)).unsqueeze(0).unsqueeze(0)
+        
+        attentions = []
+        for layer in self.layers:
+            x, attn = layer(x, mask)
+            attentions.append(attn)
+        
+        output = self.final_layer(x)
+        
+        if targets is not None:
+            # Flatten the output and targets to calculate CrossEntropyLoss
+            output = output.view(-1, output.size(-1))  # Shape: (batch_size * seq_len, vocab_size)
+            targets = targets.view(-1)  # Shape: (batch_size * seq_len)
+            loss = self.loss_fn(output, targets)  # Compute the cross-entropy loss
+            return output, loss
+        
+        return output  
+        
+        if self.return_attentions:
+            return output, attentions 
+        else:
+            return output
